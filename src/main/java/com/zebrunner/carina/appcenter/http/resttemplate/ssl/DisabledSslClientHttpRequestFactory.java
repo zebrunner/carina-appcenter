@@ -15,6 +15,7 @@
  *******************************************************************************/
 package com.zebrunner.carina.appcenter.http.resttemplate.ssl;
 
+import org.apache.http.conn.ssl.NoopHostnameVerifier;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 
 import javax.net.ssl.HttpsURLConnection;
@@ -33,27 +34,18 @@ public class DisabledSslClientHttpRequestFactory extends SimpleClientHttpRequest
     @Override
     protected void prepareConnection(HttpURLConnection connection, String httpMethod) throws IOException {
         if (connection instanceof HttpsURLConnection) {
-
             SSLContext sslContext = null;
-            try {
-                sslContext = SSLContext.getInstance("TLS");
-            } catch (NoSuchAlgorithmException e) {
-                e.printStackTrace();
-            }
             TrustManager[] trustManagerArray = { new NullX509TrustManager() };
             try {
+                sslContext = SSLContext.getInstance("TLS");
                 sslContext.init(null, trustManagerArray, null);
-            } catch (KeyManagementException e) {
-                e.printStackTrace();
+            } catch (NoSuchAlgorithmException | KeyManagementException e) {
+                throw new RuntimeException("Something went wrong when try to init SSLContext", e);
             }
 
             ((HttpsURLConnection) connection).setSSLSocketFactory(sslContext.getSocketFactory());
-            ((HttpsURLConnection) connection).setHostnameVerifier(new NullHostnameVerifier());
+            ((HttpsURLConnection) connection).setHostnameVerifier(new NoopHostnameVerifier());
         }
-
-        // Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("localhost", 8888));
-        // setProxy(proxy);
-
         super.prepareConnection(connection, httpMethod);
     }
 

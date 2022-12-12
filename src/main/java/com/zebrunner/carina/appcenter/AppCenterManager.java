@@ -20,6 +20,7 @@ import com.zebrunner.carina.appcenter.http.resttemplate.RestTemplateBuilder;
 import com.zebrunner.carina.utils.Configuration;
 import com.zebrunner.carina.utils.Configuration.Parameter;
 import com.zebrunner.carina.utils.cloud.CloudManager;
+import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,12 +67,18 @@ public class AppCenterManager implements CloudManager {
 
     private static final String HOST_URL = "api.appcenter.ms";
     private static final String API_APPS = "/v0.1/apps";
+
+    private static final String APP_NAME = "appName";
+    private static final String PLATFORM_NAME = "platformName";
+    private static final String BUILD_TYPE = "buildType";
+    private static final String APP_VERSION = "version";
+
     // appcenter://appName/platformName/buildType/version
     private static final Pattern APP_CENTER_ENDPOINT_PATTERN = Pattern.compile(
-            "appcenter:\\/\\/(?<appName>[a-zA-Z-0-9][^\\/]*)\\/"
-                    + "(?<platformName>[a-zA-Z-0-9][^\\/]*)\\/"
-                    + "(?<buildType>[a-zA-Z-0-9][^\\/]*)\\/"
-                    + "(?<version>[a-zA-Z-0-9][^\\/]*)");
+            "appcenter:\\/\\/(?<" + APP_NAME + ">[a-zA-Z-0-9][^\\/]*)\\/"
+                    + "(?<" + PLATFORM_NAME + ">[a-zA-Z-0-9][^\\/]*)\\/"
+                    + "(?<" + BUILD_TYPE + ">[a-zA-Z-0-9][^\\/]*)\\/"
+                    + "(?<" + APP_VERSION + ">[a-zA-Z-0-9][^\\/]*)");
     private static AppCenterManager instance = null;
 
     private AppCenterManager() {
@@ -108,13 +115,13 @@ public class AppCenterManager implements CloudManager {
             throw new IllegalArgumentException(String.format("AppCenter url is not correct: %s%n It should be like: %s.",
                     from, "appcenter://appName/platformName/buildType/version"));
         }
-        // TODO: test if generated appcenter download url is valid
+
         try {
             getBuild(to.toFile().getAbsolutePath(),
-                    matcher.group("appName"),
-                    matcher.group("platformName"),
-                    matcher.group("buildType"),
-                    matcher.group("version"));
+                    matcher.group(APP_NAME),
+                    matcher.group(PLATFORM_NAME),
+                    matcher.group(BUILD_TYPE),
+                    matcher.group(APP_VERSION));
             isSuccessful = true;
         } catch (Exception e) {
             LOGGER.error("Something went wrong when try to download application from AppCenter.", e);
@@ -142,11 +149,7 @@ public class AppCenterManager implements CloudManager {
             throw new IllegalArgumentException(String.format("AppCenter url is not correct: %s%n It should be like: %s.",
                     url, "appcenter://appName/platformName/buildType/version"));
         }
-        // TODO: test if generated appcenter download url is valid
-        return getDownloadUrl(matcher.group("appName"),
-                matcher.group("platformName"),
-                matcher.group("buildType"),
-                matcher.group("version"));
+        return getDownloadUrl(matcher.group(APP_NAME), matcher.group(PLATFORM_NAME), matcher.group(BUILD_TYPE), matcher.group(APP_VERSION));
     }
 
     /**
@@ -163,7 +166,7 @@ public class AppCenterManager implements CloudManager {
         String buildToDownload = getDownloadUrl(appName, platformName, buildType, version);
 
         //TODO: wrap below code into the public download method
-        String fileName = folder + "/" + createFileName(appName, buildType, platformName);
+        String fileName = FilenameUtils.concat(folder, createFileName(appName, buildType, platformName));
         File fileToLocate = null;
 
         try {
@@ -171,10 +174,11 @@ public class AppCenterManager implements CloudManager {
             File[] listOfFiles = file.listFiles();
 
             if (file.list() != null) {
-                for (int i = 0; i < listOfFiles.length; ++i) {
-                    if (listOfFiles[i].isFile() && fileName.contains(listOfFiles[i].getName())) {
-                        LOGGER.info("File has been Located Locally.  File path is: " + listOfFiles[i].getAbsolutePath());
-                        fileToLocate = listOfFiles[i];
+                Objects.requireNonNull(listOfFiles);
+                for (File listOfFile : listOfFiles) {
+                    if (listOfFile.isFile() && fileName.contains(listOfFile.getName())) {
+                        LOGGER.info("File has been Located Locally.  File path is: {}", listOfFile.getAbsolutePath());
+                        fileToLocate = listOfFile;
                     }
                 }
             }
@@ -192,7 +196,7 @@ public class AppCenterManager implements CloudManager {
                     retry = downloadBuild(fileName, downloadLink);
                     retryCount = retryCount + 1;
                 }
-                LOGGER.debug(String.format("AppCenter Build (%s) was retrieved", fileName));
+                LOGGER.debug("AppCenter Build ({}) was retrieved", fileName);
             } catch (Exception ex) {
                 LOGGER.error("Error Thrown When Attempting to Transfer AppCenter Build!", ex);
             }
@@ -214,7 +218,7 @@ public class AppCenterManager implements CloudManager {
         try (ReadableByteChannel readableByteChannel = Channels.newChannel(downloadLink.openStream());
                 FileOutputStream fos = new FileOutputStream(fileName)) {
             if (Thread.currentThread().isInterrupted()) {
-                LOGGER.debug(String.format("Current Thread (%s) is interrupted, clearing interruption.", Thread.currentThread().getId()));
+                LOGGER.debug("Current Thread ({}) is interrupted, clearing interruption.", Thread.currentThread().getId());
                 Thread.interrupted();
             }
             fos.getChannel().transferFrom(readableByteChannel, 0, Long.MAX_VALUE);
@@ -241,14 +245,15 @@ public class AppCenterManager implements CloudManager {
                 API_APPS,
                 HttpMethod.GET);
         JsonNode appResults = restTemplate.exchange(retrieveApps, JsonNode.class).getBody();
-        LOGGER.info("AppCenter Searching For App: " + appName);
-        LOGGER.debug("AppCenter JSON Response: " + appResults);
+        LOGGER.info("AppCenter Searching For App: {}", appName);
+        LOGGER.debug("AppCenter JSON Response: {}", appResults);
+        Objects.requireNonNull(appResults);
 
         for (JsonNode node : appResults) {
             if (platformName.equalsIgnoreCase(node.get("os").asText()) && node.get("name").asText().toLowerCase().contains(appName.toLowerCase())) {
                 ownerName = node.get("owner").get("name").asText();
                 String app = node.get("name").asText();
-                LOGGER.info(String.format("Found Owner: %s App: %s", ownerName, app));
+                LOGGER.info("Found Owner: {} App: {}", ownerName, app);
                 appMap.put(app, getLatestBuildDate(app, node.get("updated_at").asText()));
             }
         }
@@ -261,7 +266,7 @@ public class AppCenterManager implements CloudManager {
                             Map.Entry::getKey, Map.Entry::getValue, (e1, e2) -> e1, LinkedHashMap::new));
         }
 
-        throw new RuntimeException(String.format("Application Not Found in AppCenter for Organization (%s) Name (%s), Platform (%s)", ownerName, appName, platformName));
+        throw new NotFoundException(String.format("Application Not Found in AppCenter for Organization (%s) Name (%s), Platform (%s)", ownerName, appName, platformName));
     }
 
     /**
@@ -274,7 +279,7 @@ public class AppCenterManager implements CloudManager {
      */
     private String scanAppForBuild(Map<String, String> apps, String buildType, String version) {
         for (String currentApp : apps.keySet()) {
-            LOGGER.info("Scanning App " + currentApp);
+            LOGGER.info("Scanning App {}", currentApp);
             MultiValueMap<String, String> queryParams = new LinkedMultiValueMap<>();
             queryParams.add("published_only", "true");
             queryParams.add("scope", "tester");
@@ -285,14 +290,16 @@ public class AppCenterManager implements CloudManager {
                     queryParams,
                     HttpMethod.GET);
             JsonNode buildList = restTemplate.exchange(retrieveList, JsonNode.class).getBody();
-            LOGGER.debug("Available Builds JSON: " + buildList);
+            LOGGER.debug("Available Builds JSON: {}", buildList);
+
+            Objects.requireNonNull(buildList);
 
             if (buildList.size() > 0) {
                 int buildLimiter = 0;
                 for (JsonNode build : buildList) {
 
                     buildLimiter += 1;
-                    if (buildLimiter >=50) {
+                    if (buildLimiter >= 50) {
                         break;
                     }
 
@@ -305,13 +312,15 @@ public class AppCenterManager implements CloudManager {
                             String.format("%s/%s/%s/releases/%s", API_APPS, ownerName, currentApp, latestBuildNumber),
                             HttpMethod.GET);
                     JsonNode appBuild = restTemplate.exchange(retrieveBuildUrl, JsonNode.class).getBody();
-                    if (checkBuild(version, appBuild) && (checkTitleForCorrectPattern(buildType.toLowerCase(), appBuild) || checkNotesForCorrectBuild(buildType.toLowerCase(), appBuild))) {
-                        LOGGER.debug("Print Build Info: " + appBuild);
-                        LOGGER.info(
-                                String.format(
-                                        "Fetching Build ID (%s) Version: %s (%s)", latestBuildNumber, versionShort, versionLong));
+
+                    Objects.requireNonNull(appBuild);
+
+                    if (checkBuild(version, appBuild) && (checkTitleForCorrectPattern(buildType.toLowerCase(), appBuild) || checkNotesForCorrectBuild(
+                            buildType.toLowerCase(), appBuild))) {
+                        LOGGER.debug("Print Build Info: {}", appBuild);
+                        LOGGER.info("Fetching Build ID ({}) Version: {} ({})", latestBuildNumber, versionShort, versionLong);
                         String buildUrl = appBuild.get("download_url").asText();
-                        LOGGER.info("Download URL For Build: " + buildUrl);
+                        LOGGER.info("Download URL For Build: {}", buildUrl);
 
                         return buildUrl;
                     }
@@ -319,7 +328,7 @@ public class AppCenterManager implements CloudManager {
             }
         }
 
-        throw new RuntimeException(String.format("Unable to find build to download, version provided (%s)", version));
+        throw new NotFoundException(String.format("Unable to find build to download, version provided (%s)", version));
     }
 
     /**
@@ -340,6 +349,8 @@ public class AppCenterManager implements CloudManager {
                 queryParams,
                 HttpMethod.GET);
         JsonNode buildList = restTemplate.exchange(retrieveList, JsonNode.class).getBody();
+        Objects.requireNonNull(buildList);
+
         if (buildList.size() > 0) {
             return buildList.get(0).get("uploaded_at").asText();
         }
@@ -358,8 +369,7 @@ public class AppCenterManager implements CloudManager {
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
-    private RequestEntity<String> buildRequestEntity(String hostUrl, String path,
-                                                     HttpMethod httpMethod) {
+    private RequestEntity<String> buildRequestEntity(String hostUrl, String path, HttpMethod httpMethod) {
 
         UriComponents uriComponents = UriComponentsBuilder.newInstance()
                 .scheme("https")
@@ -414,7 +424,7 @@ public class AppCenterManager implements CloudManager {
     }
 
     private boolean checkForPattern(String nodeName, String pattern, JsonNode node) {
-        LOGGER.debug("\nPattern to be checked: " + pattern);
+        LOGGER.debug("\nPattern to be checked: {}", pattern);
         if (node.findPath("release_notes").isMissingNode()) {
             return false;
         }
@@ -427,7 +437,7 @@ public class AppCenterManager implements CloudManager {
         }
 
         if (!segmentsFound.isEmpty() && !segmentsFound.contains(false)) {
-            LOGGER.debug("\nPattern match found!! This is the buildType to be used: " + nodeField);
+            LOGGER.debug("\nPattern match found!! This is the buildType to be used: {}", nodeField);
             return true;
         }
         String patternToReplace = ".*[ ->\\S]%s[ -<\\S].*";
