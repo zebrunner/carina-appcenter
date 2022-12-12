@@ -35,7 +35,7 @@ import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.web.client.RestTemplate;
 
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -46,7 +46,7 @@ public class RestTemplateBuilder {
 
     protected RestTemplate restTemplate = new RestTemplate();
 
-    protected List<HttpMessageConverter<?>> httpMessageConverters = new ArrayList<HttpMessageConverter<?>>();
+    protected List<HttpMessageConverter<?>> httpMessageConverters = new ArrayList<>();
 
     protected boolean isDisableSslChecking = false;
 
@@ -65,8 +65,7 @@ public class RestTemplateBuilder {
         return new RestTemplateBuilder();
     }
 
-    public RestTemplateBuilder withMessageConverter(
-            HttpMessageConverter<?> messageConverter) {
+    public RestTemplateBuilder withMessageConverter(HttpMessageConverter<?> messageConverter) {
         this.httpMessageConverters.add(messageConverter);
         return this;
     }
@@ -101,7 +100,7 @@ public class RestTemplateBuilder {
      * @return RestTemplateBuilder
      */
     public RestTemplateBuilder withUtf8EncodingMessageConverter() {
-        withMessageConverter(new StringHttpMessageConverter(Charset.forName("UTF-8")));
+        withMessageConverter(new StringHttpMessageConverter(StandardCharsets.UTF_8));
 
         return this;
     }
@@ -120,12 +119,7 @@ public class RestTemplateBuilder {
 
             HttpMessageConverter<?> httpMessageConverter = Iterables.tryFind(
                     restTemplate.getMessageConverters(),
-                    new Predicate<HttpMessageConverter<?>>() {
-                        @Override
-                        public boolean apply(HttpMessageConverter<?> input) {
-                            return input instanceof MappingJackson2HttpMessageConverter;
-                        }
-                    }).orNull();
+                    input -> input instanceof MappingJackson2HttpMessageConverter).orNull();
 
             restTemplate.getMessageConverters().remove(httpMessageConverter);
         }
