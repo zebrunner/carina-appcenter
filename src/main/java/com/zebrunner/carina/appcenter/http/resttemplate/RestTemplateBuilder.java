@@ -16,7 +16,6 @@
 package com.zebrunner.carina.appcenter.http.resttemplate;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.zebrunner.carina.appcenter.http.resttemplate.ssl.DisabledSslClientHttpRequestFactory;
