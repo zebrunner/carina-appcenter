@@ -17,9 +17,9 @@ package com.zebrunner.carina.appcenter;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.zebrunner.carina.appcenter.http.resttemplate.RestTemplateBuilder;
+import com.zebrunner.carina.commons.artifact.IArtifactManager;
 import com.zebrunner.carina.utils.Configuration;
 import com.zebrunner.carina.utils.Configuration.Parameter;
-import com.zebrunner.carina.utils.cloud.CloudManager;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.slf4j.Logger;
@@ -56,7 +56,7 @@ import java.util.stream.Collectors;
 /**
  * Created by boyle on 8/16/17.
  */
-public class AppCenterManager implements CloudManager {
+public class AppCenterManager implements IArtifactManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
     protected RestTemplate restTemplate = RestTemplateBuilder.newInstance().withDisabledSslChecking().withSpecificJsonMessageConverter().build();
@@ -140,7 +140,7 @@ public class AppCenterManager implements CloudManager {
     }
 
     @Override
-    public String updateAppPath(String url) {
+    public String getDirectLink(String url) {
         if (Objects.isNull(url) || url.isEmpty()) {
             throw new IllegalArgumentException("Argument cannot be null or empty.");
         }
