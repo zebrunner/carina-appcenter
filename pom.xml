@@ -49,8 +49,8 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>11</java.version>
-        <carina-utils.version>1.0.1</carina-utils.version>
-        <carina-commons.version>1.0.1</carina-commons.version>
+        <carina-utils.version>1.0.3</carina-utils.version>
+        <carina-commons.version>1.0.2</carina-commons.version>
 
         <httpclient.version>4.5.13</httpclient.version>
         <spring.version>5.3.19</spring.version>
@@ -85,6 +85,20 @@
             <groupId>com.zebrunner</groupId>
             <artifactId>carina-utils</artifactId>
             <version>${carina-utils.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.testng</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.seleniumhq.selenium</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>io.rest-assured</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.zebrunner</groupId>
@@ -122,7 +136,7 @@
             <groupId>org.testng</groupId>
             <artifactId>testng</artifactId>
             <version>${testng.version}</version>
-            <scope>compile</scope>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
