@@ -16,10 +16,11 @@
 package com.zebrunner.carina.appcenter;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.zebrunner.carina.appcenter.config.AppCenterConfiguration;
 import com.zebrunner.carina.appcenter.http.resttemplate.RestTemplateBuilder;
 import com.zebrunner.carina.commons.artifact.IArtifactManager;
-import com.zebrunner.carina.utils.Configuration;
-import com.zebrunner.carina.utils.Configuration.Parameter;
+import com.zebrunner.carina.utils.config.Configuration;
+import com.zebrunner.carina.utils.config.StandardConfigurationOption;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.slf4j.Logger;
@@ -395,11 +396,10 @@ public class AppCenterManager implements IArtifactManager {
     }
 
     private HttpHeaders setHeaders() {
-
         HttpHeaders httpHeader = new HttpHeaders();
         httpHeader.add("Content-Type", "application/json; charset=utf-8");
-        httpHeader.add("x-api-token", Configuration.get(Parameter.APPCENTER_TOKEN));
-
+        httpHeader.add("x-api-token",
+                Configuration.getRequired(AppCenterConfiguration.Parameter.APPCENTER_TOKEN, StandardConfigurationOption.DECRYPT));
         return httpHeader;
     }
 
