@@ -15,9 +15,13 @@
  *******************************************************************************/
 package com.zebrunner.carina.appcenter;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import com.zebrunner.carina.appcenter.client.ApiClient;
+import com.zebrunner.carina.appcenter.client.api.AccountApi;
+import com.zebrunner.carina.appcenter.client.api.DistributeApi;
+import com.zebrunner.carina.appcenter.client.model.App;
+import com.zebrunner.carina.appcenter.client.model.ReleaseDetailsResponse;
+import com.zebrunner.carina.appcenter.client.model.ReleasesAvailableToTester;
 import com.zebrunner.carina.appcenter.config.AppCenterConfiguration;
-import com.zebrunner.carina.appcenter.http.resttemplate.RestTemplateBuilder;
 import com.zebrunner.carina.commons.artifact.IArtifactManager;
 import com.zebrunner.carina.utils.config.Configuration;
 import com.zebrunner.carina.utils.config.StandardConfigurationOption;
@@ -25,14 +29,6 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.RequestEntity;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponents;
-import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -48,6 +44,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Matcher;
@@ -59,15 +56,11 @@ import java.util.stream.Collectors;
  */
 public class AppCenterManager implements IArtifactManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
-
-    protected RestTemplate restTemplate = RestTemplateBuilder.newInstance().withDisabledSslChecking().withSpecificJsonMessageConverter().build();
+    private final ApiClient apiClient;
 
     private String ownerName;
     private String versionLong;
     private String versionShort;
-
-    private static final String HOST_URL = "api.appcenter.ms";
-    private static final String API_APPS = "/v0.1/apps";
 
     private static final String APP_NAME = "appName";
     private static final String PLATFORM_NAME = "platformName";
@@ -83,6 +76,8 @@ public class AppCenterManager implements IArtifactManager {
     private static AppCenterManager instance = null;
 
     private AppCenterManager() {
+        this.apiClient = new ApiClient().addDefaultHeader("x-api-token",
+                Configuration.getRequired(AppCenterConfiguration.Parameter.APPCENTER_TOKEN, StandardConfigurationOption.DECRYPT));
     }
 
     public static synchronized AppCenterManager getInstance() {
@@ -93,14 +88,13 @@ public class AppCenterManager implements IArtifactManager {
     }
 
     /**
-    *
-    * @param appName takes in the AppCenter Name to look for.
-    * @param platformName takes in the platform we wish to download for.
-    * @param buildType takes in the particular build to download (i.e. Prod.AdHoc, QA.Debug, Prod-Release, QA-Internal etc...)
-    * @param version takes in either "latest" to take the first build that matches the criteria or allows to consume a version to download that
-    *            build.
-    * @return download url for build artifact.
-    */
+     * @param appName      takes in the AppCenter Name to look for.
+     * @param platformName takes in the platform we wish to download for.
+     * @param buildType    takes in the particular build to download (i.e. Prod.AdHoc, QA.Debug, Prod-Release, QA-Internal etc...)
+     * @param version      takes in either "latest" to take the first build that matches the criteria or allows to consume a version to download that
+     *                     build.
+     * @return download url for build artifact.
+     */
    public String getDownloadUrl(String appName, String platformName, String buildType, String version) {
        return scanAppForBuild(getAppId(appName, platformName), buildType, version);
    }
@@ -241,21 +235,12 @@ public class AppCenterManager implements IArtifactManager {
     private Map<String, String> getAppId(String appName, String platformName) {
         Map<String, String> appMap = new HashMap<>();
 
-        RequestEntity<String> retrieveApps = buildRequestEntity(
-                HOST_URL,
-                API_APPS,
-                HttpMethod.GET);
-        JsonNode appResults = restTemplate.exchange(retrieveApps, JsonNode.class).getBody();
-        LOGGER.info("AppCenter Searching For App: {}", appName);
-        LOGGER.debug("AppCenter JSON Response: {}", appResults);
-        Objects.requireNonNull(appResults);
-
-        for (JsonNode node : appResults) {
-            if (platformName.equalsIgnoreCase(node.get("os").asText()) && node.get("name").asText().toLowerCase().contains(appName.toLowerCase())) {
-                ownerName = node.get("owner").get("name").asText();
-                String app = node.get("name").asText();
+        for (App node : new AccountApi(apiClient).appsList(null)) {
+            if (platformName.equalsIgnoreCase(node.getOs().toString()) && node.getName().toLowerCase().contains(appName.toLowerCase())) {
+                ownerName = node.getOwner().getName();
+                String app = node.getName();
                 LOGGER.info("Found Owner: {} App: {}", ownerName, app);
-                appMap.put(app, getLatestBuildDate(app, node.get("updated_at").asText()));
+                appMap.put(app, getLatestBuildDate(app, node.getUpdatedAt()));
             }
         }
 
@@ -266,7 +251,6 @@ public class AppCenterManager implements IArtifactManager {
                     .collect(Collectors.toMap(
                             Map.Entry::getKey, Map.Entry::getValue, (e1, e2) -> e1, LinkedHashMap::new));
         }
-
         throw new NotFoundException(String.format("Application Not Found in AppCenter for Organization (%s) Name (%s), Platform (%s)", ownerName, appName, platformName));
     }
 
@@ -281,48 +265,34 @@ public class AppCenterManager implements IArtifactManager {
     private String scanAppForBuild(Map<String, String> apps, String buildType, String version) {
         for (String currentApp : apps.keySet()) {
             LOGGER.info("Scanning App {}", currentApp);
-            MultiValueMap<String, String> queryParams = new LinkedMultiValueMap<>();
-            queryParams.add("published_only", "true");
-            queryParams.add("scope", "tester");
+            List<ReleasesAvailableToTester> retrieveList = new DistributeApi(apiClient).releasesList(ownerName, currentApp, true,
+                    "tester", null,
+                    null);
 
-            RequestEntity<String> retrieveList = buildRequestEntity(
-                    HOST_URL,
-                    String.format("%s/%s/%s/releases", API_APPS, ownerName, currentApp),
-                    queryParams,
-                    HttpMethod.GET);
-            JsonNode buildList = restTemplate.exchange(retrieveList, JsonNode.class).getBody();
-            LOGGER.debug("Available Builds JSON: {}", buildList);
+            LOGGER.debug("Available Builds JSON: {}", retrieveList);
 
-            Objects.requireNonNull(buildList);
-
-            if (buildList.size() > 0) {
+            if (!retrieveList.isEmpty()) {
                 int buildLimiter = 0;
-                for (JsonNode build : buildList) {
+                for (ReleasesAvailableToTester build : retrieveList) {
 
                     buildLimiter += 1;
                     if (buildLimiter >= 50) {
                         break;
                     }
 
-                    String latestBuildNumber = build.get("id").asText();
-                    versionShort = build.get("short_version").asText();
-                    versionLong = build.get("version").asText();
+                    Integer latestBuildNumber = build.getId();
+                    versionShort = build.getShortVersion();
+                    versionLong = build.getVersion();
 
-                    RequestEntity<String> retrieveBuildUrl = buildRequestEntity(
-                            HOST_URL,
-                            String.format("%s/%s/%s/releases/%s", API_APPS, ownerName, currentApp, latestBuildNumber),
-                            HttpMethod.GET);
-                    JsonNode appBuild = restTemplate.exchange(retrieveBuildUrl, JsonNode.class).getBody();
-
-                    Objects.requireNonNull(appBuild);
+                    ReleaseDetailsResponse appBuild = new DistributeApi(apiClient).releasesGetLatestByUser(String.valueOf(latestBuildNumber),
+                            ownerName, currentApp, null, null);
 
                     if (checkBuild(version, appBuild) && (checkTitleForCorrectPattern(buildType.toLowerCase(), appBuild) || checkNotesForCorrectBuild(
                             buildType.toLowerCase(), appBuild))) {
                         LOGGER.debug("Print Build Info: {}", appBuild);
                         LOGGER.info("Fetching Build ID ({}) Version: {} ({})", latestBuildNumber, versionShort, versionLong);
-                        String buildUrl = appBuild.get("download_url").asText();
+                        String buildUrl = appBuild.getDownloadUrl();
                         LOGGER.info("Download URL For Build: {}", buildUrl);
-
                         return buildUrl;
                     }
                 }
@@ -340,67 +310,23 @@ public class AppCenterManager implements IArtifactManager {
      * @return the date value to be used in sorting.
      */
     private String getLatestBuildDate(String app, String appUpdatedAt) {
-        MultiValueMap<String, String> queryParams = new LinkedMultiValueMap<>();
-        queryParams.add("published_only", "true");
-        queryParams.add("scope", "tester");
-
-        RequestEntity<String> retrieveList = buildRequestEntity(
-                HOST_URL,
-                String.format("%s/%s/%s/releases", API_APPS, ownerName, app),
-                queryParams,
-                HttpMethod.GET);
-        JsonNode buildList = restTemplate.exchange(retrieveList, JsonNode.class).getBody();
-        Objects.requireNonNull(buildList);
-
-        if (buildList.size() > 0) {
-            return buildList.get(0).get("uploaded_at").asText();
+        List<ReleasesAvailableToTester> retrieveList = new DistributeApi(apiClient).releasesList(ownerName, app, true, "tester", null,
+                null);
+        if (!retrieveList.isEmpty()) {
+            return retrieveList.get(0).getUploadedAt();
         }
         return appUpdatedAt;
     }
 
-    private boolean checkBuild(String version, JsonNode node) {
+    private boolean checkBuild(String version, ReleaseDetailsResponse node) {
 
         if ("latest".equalsIgnoreCase(version)) {
             return true;
         }
 
         return version.equalsIgnoreCase(
-                node.get("short_version").asText() + "." + node.get("version").asText())
-                || version.equalsIgnoreCase(node.get("short_version").asText());
-    }
-
-    @SuppressWarnings({ "rawtypes", "unchecked" })
-    private RequestEntity<String> buildRequestEntity(String hostUrl, String path, HttpMethod httpMethod) {
-
-        UriComponents uriComponents = UriComponentsBuilder.newInstance()
-                .scheme("https")
-                .host(hostUrl)
-                .path(path)
-                .build();
-
-        return new RequestEntity(setHeaders(), httpMethod, uriComponents.toUri());
-    }
-
-    @SuppressWarnings({ "rawtypes", "unchecked" })
-    private RequestEntity<String> buildRequestEntity(String hostUrl, String path,
-                                                     MultiValueMap<String, String> listQueryParams, HttpMethod httpMethod) {
-
-        UriComponents uriComponents = UriComponentsBuilder.newInstance()
-                .scheme("https")
-                .host(hostUrl)
-                .path(path)
-                .queryParams(listQueryParams)
-                .build();
-
-        return new RequestEntity(setHeaders(), httpMethod, uriComponents.toUri());
-    }
-
-    private HttpHeaders setHeaders() {
-        HttpHeaders httpHeader = new HttpHeaders();
-        httpHeader.add("Content-Type", "application/json; charset=utf-8");
-        httpHeader.add("x-api-token",
-                Configuration.getRequired(AppCenterConfiguration.Parameter.APPCENTER_TOKEN, StandardConfigurationOption.DECRYPT));
-        return httpHeader;
+                node.getShortVersion() + "." + node.getVersion())
+                || version.equalsIgnoreCase(node.getShortVersion());
     }
 
     private String createFileName(String appName, String buildType, String platformName) {
@@ -414,25 +340,13 @@ public class AppCenterManager implements IArtifactManager {
         return fileName + ".apk";
     }
 
-    private boolean checkNotesForCorrectBuild(String pattern, JsonNode node) {
-
-        return checkForPattern("release_notes", pattern, node);
-    }
-
-    private boolean checkTitleForCorrectPattern(String pattern, JsonNode node) {
-        return checkForPattern("app_name", pattern, node);
-    }
-
-    private boolean checkForPattern(String nodeName, String pattern, JsonNode node) {
+    private boolean checkNotesForCorrectBuild(String pattern, ReleaseDetailsResponse node) {
         LOGGER.debug("\nPattern to be checked: {}", pattern);
-        if (node.findPath("release_notes").isMissingNode()) {
-            return false;
-        }
 
-        String nodeField = node.get(nodeName).asText().toLowerCase();
+        String nodeField = node.getReleaseNotes().toLowerCase();
         String[] splitPattern = pattern.split("\\.");
         LinkedList<Boolean> segmentsFound = new LinkedList<>();
-        for(String segment : splitPattern){
+        for (String segment : splitPattern) {
             segmentsFound.add(nodeField.contains(segment));
         }
 
@@ -442,6 +356,25 @@ public class AppCenterManager implements IArtifactManager {
         }
         String patternToReplace = ".*[ ->\\S]%s[ -<\\S].*";
         return !pattern.isEmpty() && scanningAllNotes(String.format(patternToReplace, pattern), nodeField);
+    }
+
+    private boolean checkTitleForCorrectPattern(String pattern, ReleaseDetailsResponse node) {
+        LOGGER.debug("\nPattern to be checked: {}", pattern);
+
+        String nodeField = node.getAppName().toLowerCase();
+        String[] splitPattern = pattern.split("\\.");
+        LinkedList<Boolean> segmentsFound = new LinkedList<>();
+        for (String segment : splitPattern) {
+            segmentsFound.add(nodeField.contains(segment));
+        }
+
+        if (!segmentsFound.isEmpty() && !segmentsFound.contains(false)) {
+            LOGGER.debug("\nPattern match found!! This is the buildType to be used: {}", nodeField);
+            return true;
+        }
+        String patternToReplace = ".*[ ->\\S]%s[ -<\\S].*";
+        return !pattern.isEmpty() && scanningAllNotes(String.format(patternToReplace, pattern), nodeField);
+
     }
 
     private boolean searchFieldsForString(String pattern, String stringToSearch) {

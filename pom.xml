@@ -51,11 +51,9 @@
         <java.version>11</java.version>
         <carina-utils.version>1.1.5</carina-utils.version>
         <carina-commons.version>1.0.2</carina-commons.version>
-
-        <httpclient.version>4.5.13</httpclient.version>
-        <spring.version>5.3.19</spring.version>
-        <guava.version>31.1-jre</guava.version>
-        <jackson.version>2.14.1</jackson.version>
+        <gson.version>2.10.1</gson.version>
+        <okhttp.version>4.11.0</okhttp.version>
+        <jsr305.version>3.0.2</jsr305.version>
         <testng.version>7.7.1</testng.version>
 
         <maven-source-plugin.version>3.0.1</maven-source-plugin.version>
@@ -101,33 +99,25 @@
             <artifactId>carina-commons</artifactId>
             <version>${carina-commons.version}</version>
         </dependency>
+
         <dependency>
-            <groupId>org.apache.httpcomponents</groupId>
-            <artifactId>httpclient</artifactId>
-            <version>${httpclient.version}</version>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>${gson.version}</version>
         </dependency>
-        <!-- needed for spring RestTemplate stuff -->
+
         <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-web</artifactId>
-            <version>${spring.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>commons-logging</groupId>
-                    <artifactId>commons-logging</artifactId>
-                </exclusion>
-            </exclusions>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>${okhttp.version}</version>
         </dependency>
+
         <dependency>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-            <version>${guava.version}</version>
+            <groupId>com.google.code.findbugs</groupId>
+            <artifactId>jsr305</artifactId>
+            <version>${jsr305.version}</version>
         </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-            <version>${jackson.version}</version>
-        </dependency>
+
         <dependency>
             <groupId>org.testng</groupId>
             <artifactId>testng</artifactId>
