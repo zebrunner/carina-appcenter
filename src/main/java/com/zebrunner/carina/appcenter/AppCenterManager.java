@@ -103,7 +103,13 @@ public class AppCenterManager implements IArtifactManager {
      *                     build.
      * @return download url for build artifact.
      */
-    private static String getDownloadUrl(String appName, String platformName, String buildType, String version, AppInfo appInfo) {
+    @Deprecated(forRemoval = true)
+    public static String getDownloadUrl(String appName, String platformName, String buildType, String version) {
+        return scanAppForBuild(getAppId(appName, platformName), buildType, version, new AppInfo());
+    }
+
+    @Deprecated(forRemoval = true)
+    public static String getDownloadUrl(String appName, String platformName, String buildType, String version, AppInfo appInfo) {
         return scanAppForBuild(getAppId(appName, platformName), buildType, version, appInfo);
     }
 
