@@ -22,6 +22,9 @@ import com.zebrunner.carina.utils.Configuration;
 import com.zebrunner.carina.utils.Configuration.Parameter;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.concurrent.ConcurrentException;
+import org.apache.commons.lang3.concurrent.LazyInitializer;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -49,6 +52,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -58,6 +62,7 @@ import java.util.stream.Collectors;
  */
 public class AppCenterManager implements IArtifactManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+    private static final Map<String, LazyInitializer<AppInfo>> CACHE_APP_INFO = new ConcurrentHashMap<>();
 
     protected RestTemplate restTemplate = RestTemplateBuilder.newInstance().withDisabledSslChecking().withSpecificJsonMessageConverter().build();
 
@@ -92,17 +97,16 @@ public class AppCenterManager implements IArtifactManager {
     }
 
     /**
-    *
-    * @param appName takes in the AppCenter Name to look for.
-    * @param platformName takes in the platform we wish to download for.
-    * @param buildType takes in the particular build to download (i.e. Prod.AdHoc, QA.Debug, Prod-Release, QA-Internal etc...)
-    * @param version takes in either "latest" to take the first build that matches the criteria or allows to consume a version to download that
-    *            build.
-    * @return download url for build artifact.
-    */
-   public String getDownloadUrl(String appName, String platformName, String buildType, String version) {
-       return scanAppForBuild(getAppId(appName, platformName), buildType, version);
-   }
+     * @param appName      takes in the AppCenter Name to look for.
+     * @param platformName takes in the platform we wish to download for.
+     * @param buildType    takes in the particular build to download (i.e. Prod.AdHoc, QA.Debug, Prod-Release, QA-Internal etc...)
+     * @param version      takes in either "latest" to take the first build that matches the criteria or allows to consume a version to download that
+     *                     build.
+     * @return download url for build artifact.
+     */
+    private String getDownloadUrl(String appName, String platformName, String buildType, String version, AppInfo appInfo) {
+        return scanAppForBuild(getAppId(appName, platformName), buildType, version, appInfo);
+    }
 
     @Override
     public boolean download(String from, Path to) {
@@ -149,21 +153,45 @@ public class AppCenterManager implements IArtifactManager {
             throw new IllegalArgumentException(String.format("AppCenter url is not correct: %s%n It should be like: %s.",
                     url, "appcenter://appName/platformName/buildType/version"));
         }
-        return getDownloadUrl(matcher.group(APP_NAME), matcher.group(PLATFORM_NAME), matcher.group(BUILD_TYPE), matcher.group(APP_VERSION));
+        return getDownloadUrl(matcher.group(APP_NAME), matcher.group(PLATFORM_NAME), matcher.group(BUILD_TYPE), matcher.group(APP_VERSION), new AppInfo());
+    }
+
+    public AppInfo getAppInfo(String originalLink) {
+        Matcher matcher = APP_CENTER_ENDPOINT_PATTERN.matcher(Objects.requireNonNull(originalLink));
+        if (!matcher.find()) {
+            throw new IllegalArgumentException(String.format("AppCenter url is not correct: %s%n It should be like: %s.",
+                    originalLink, "appcenter://appName/platformName/buildType/version"));
+        }
+
+        try {
+            return CACHE_APP_INFO.computeIfAbsent(originalLink,
+                            link -> new LazyInitializer<>() {
+                                @Override
+                                protected AppInfo initialize() throws ConcurrentException {
+                                    AppInfo info = new AppInfo();
+
+                                    info.setDirectLink(getDownloadUrl(matcher.group(APP_NAME), matcher.group(PLATFORM_NAME), matcher.group(BUILD_TYPE),
+                                            matcher.group(APP_VERSION), info));
+                                    return info;
+                                }
+                            })
+                    .get();
+        } catch (ConcurrentException e) {
+            return ExceptionUtils.rethrow(e);
+        }
     }
 
     /**
-     *
-     * @param folder to which upload build artifact.
-     * @param appName takes in the AppCenter Name to look for.
+     * @param folder       to which upload build artifact.
+     * @param appName      takes in the AppCenter Name to look for.
      * @param platformName takes in the platform we wish to download for.
-     * @param buildType takes in the particular build to download (i.e. Prod.AdHoc, QA.Debug, Prod-Release, QA-Internal etc...)
-     * @param version takes in either "latest" to take the first build that matches the criteria or allows to consume a version to download that
-     *            build.
+     * @param buildType    takes in the particular build to download (i.e. Prod.AdHoc, QA.Debug, Prod-Release, QA-Internal etc...)
+     * @param version      takes in either "latest" to take the first build that matches the criteria or allows to consume a version to download that
+     *                     build.
      * @return file to the downloaded build artifact
      */
     public File getBuild(String folder, String appName, String platformName, String buildType, String version) {
-        String buildToDownload = getDownloadUrl(appName, platformName, buildType, version);
+        String buildToDownload = getDownloadUrl(appName, platformName, buildType, version, new AppInfo());
 
         //TODO: wrap below code into the public download method
         String fileName = FilenameUtils.concat(folder, createFileName(appName, buildType, platformName));
@@ -208,8 +236,7 @@ public class AppCenterManager implements IArtifactManager {
     }
 
     /**
-     *
-     * @param fileName will be the name of the downloaded file.
+     * @param fileName     will be the name of the downloaded file.
      * @param downloadLink will be the URL to retrieve the build from.
      * @return brings back a true/false on whether or not the build was successfully downloaded.
      * @throws IOException throws a non Interruption Exception up.
@@ -232,8 +259,7 @@ public class AppCenterManager implements IArtifactManager {
     }
 
     /**
-     *
-     * @param appName takes in the AppCenter Name to look for.
+     * @param appName      takes in the AppCenter Name to look for.
      * @param platformName takes in the platform we wish to download for.
      * @return Map&lt;String, String&gt;
      */
@@ -266,18 +292,18 @@ public class AppCenterManager implements IArtifactManager {
                             Map.Entry::getKey, Map.Entry::getValue, (e1, e2) -> e1, LinkedHashMap::new));
         }
 
-        throw new NotFoundException(String.format("Application Not Found in AppCenter for Organization (%s) Name (%s), Platform (%s)", ownerName, appName, platformName));
+        throw new NotFoundException(
+                String.format("Application Not Found in AppCenter for Organization (%s) Name (%s), Platform (%s)", ownerName, appName, platformName));
     }
 
     /**
-     *
-     * @param apps takes in the application Ids
+     * @param apps      takes in the application Ids
      * @param buildType takes in the particular build to download (i.e. Prod.AdHoc, QA.Debug, Prod-Release, QA-Internal etc...)
-     * @param version takes in either "latest" to take the first build that matches the criteria or allows to consume a version to download that
-     *            build.
+     * @param version   takes in either "latest" to take the first build that matches the criteria or allows to consume a version to download that
+     *                  build.
      * @return String
      */
-    private String scanAppForBuild(Map<String, String> apps, String buildType, String version) {
+    private String scanAppForBuild(Map<String, String> apps, String buildType, String version, AppInfo appInfo) {
         for (String currentApp : apps.keySet()) {
             LOGGER.info("Scanning App {}", currentApp);
             MultiValueMap<String, String> queryParams = new LinkedMultiValueMap<>();
@@ -318,6 +344,8 @@ public class AppCenterManager implements IArtifactManager {
                     if (checkBuild(version, appBuild) && (checkTitleForCorrectPattern(buildType.toLowerCase(), appBuild) || checkNotesForCorrectBuild(
                             buildType.toLowerCase(), appBuild))) {
                         LOGGER.debug("Print Build Info: {}", appBuild);
+                        appInfo.setVersion(versionShort);
+                        appInfo.setBuild(versionLong);
                         LOGGER.info("Fetching Build ID ({}) Version: {} ({})", latestBuildNumber, versionShort, versionLong);
                         String buildUrl = appBuild.get("download_url").asText();
                         LOGGER.info("Download URL For Build: {}", buildUrl);
@@ -334,7 +362,7 @@ public class AppCenterManager implements IArtifactManager {
     /**
      * The updated_at field returned by AppCenter doesn't contain the "latest time" a build was updated, so we grab the first build to do our sort.
      *
-     * @param app name of the app to check.
+     * @param app          name of the app to check.
      * @param appUpdatedAt passing in of a backup date value if the app we look at doesn't have a build associated to it.
      * @return the date value to be used in sorting.
      */
@@ -382,7 +410,7 @@ public class AppCenterManager implements IArtifactManager {
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private RequestEntity<String> buildRequestEntity(String hostUrl, String path,
-                                                     MultiValueMap<String, String> listQueryParams, HttpMethod httpMethod) {
+            MultiValueMap<String, String> listQueryParams, HttpMethod httpMethod) {
 
         UriComponents uriComponents = UriComponentsBuilder.newInstance()
                 .scheme("https")
@@ -432,7 +460,7 @@ public class AppCenterManager implements IArtifactManager {
         String nodeField = node.get(nodeName).asText().toLowerCase();
         String[] splitPattern = pattern.split("\\.");
         LinkedList<Boolean> segmentsFound = new LinkedList<>();
-        for(String segment : splitPattern){
+        for (String segment : splitPattern) {
             segmentsFound.add(nodeField.contains(segment));
         }
 
