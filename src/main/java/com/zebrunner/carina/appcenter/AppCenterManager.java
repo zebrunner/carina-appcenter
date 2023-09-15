@@ -148,12 +148,7 @@ public class AppCenterManager implements IArtifactManager {
         if (Objects.isNull(url) || url.isEmpty()) {
             throw new IllegalArgumentException("Argument cannot be null or empty.");
         }
-        Matcher matcher = APP_CENTER_ENDPOINT_PATTERN.matcher(url);
-        if (!matcher.find()) {
-            throw new IllegalArgumentException(String.format("AppCenter url is not correct: %s%n It should be like: %s.",
-                    url, "appcenter://appName/platformName/buildType/version"));
-        }
-        return getDownloadUrl(matcher.group(APP_NAME), matcher.group(PLATFORM_NAME), matcher.group(BUILD_TYPE), matcher.group(APP_VERSION), new AppInfo());
+        return getAppInfo(url).getDirectLink();
     }
 
     public AppInfo getAppInfo(String originalLink) {
