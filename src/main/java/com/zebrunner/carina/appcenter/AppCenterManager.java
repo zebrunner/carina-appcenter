@@ -16,6 +16,7 @@
 package com.zebrunner.carina.appcenter;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.google.common.collect.ImmutableBiMap;
 import com.zebrunner.carina.appcenter.http.resttemplate.RestTemplateBuilder;
 import com.zebrunner.carina.commons.artifact.IArtifactManager;
 import com.zebrunner.carina.utils.Configuration;
@@ -25,6 +26,7 @@ import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.concurrent.ConcurrentException;
 import org.apache.commons.lang3.concurrent.LazyInitializer;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -64,11 +66,11 @@ public class AppCenterManager implements IArtifactManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
     private static final Map<String, LazyInitializer<AppInfo>> CACHE_APP_INFO = new ConcurrentHashMap<>();
 
-    protected RestTemplate restTemplate = RestTemplateBuilder.newInstance().withDisabledSslChecking().withSpecificJsonMessageConverter().build();
-
-    private String ownerName;
-    private String versionLong;
-    private String versionShort;
+    private static final ThreadLocal<RestTemplate> restTemplate = ThreadLocal.withInitial(() -> {
+        return RestTemplateBuilder.newInstance()
+                .withDisabledSslChecking()
+                .withSpecificJsonMessageConverter().build();
+    });
 
     private static final String HOST_URL = "api.appcenter.ms";
     private static final String API_APPS = "/v0.1/apps";
@@ -90,10 +92,7 @@ public class AppCenterManager implements IArtifactManager {
     }
 
     public static synchronized AppCenterManager getInstance() {
-        if (instance == null) {
-            instance = new AppCenterManager();
-        }
-        return instance;
+        return new AppCenterManager();
     }
 
     /**
@@ -104,7 +103,7 @@ public class AppCenterManager implements IArtifactManager {
      *                     build.
      * @return download url for build artifact.
      */
-    private String getDownloadUrl(String appName, String platformName, String buildType, String version, AppInfo appInfo) {
+    private static String getDownloadUrl(String appName, String platformName, String buildType, String version, AppInfo appInfo) {
         return scanAppForBuild(getAppId(appName, platformName), buildType, version, appInfo);
     }
 
@@ -185,11 +184,11 @@ public class AppCenterManager implements IArtifactManager {
      *                     build.
      * @return file to the downloaded build artifact
      */
-    public File getBuild(String folder, String appName, String platformName, String buildType, String version) {
-        String buildToDownload = getDownloadUrl(appName, platformName, buildType, version, new AppInfo());
+    public  static File getBuild(String folder, String appName, String platformName, String buildType, String version) {
+        AppInfo appInfo = getInstance().getAppInfo(String.format("appcenter://%s/%s/%s/%s", appName, platformName, buildType, version));
 
         //TODO: wrap below code into the public download method
-        String fileName = FilenameUtils.concat(folder, createFileName(appName, buildType, platformName));
+        String fileName = FilenameUtils.concat(folder, createFileName(appName, buildType, platformName, appInfo));
         File fileToLocate = null;
 
         try {
@@ -212,7 +211,7 @@ public class AppCenterManager implements IArtifactManager {
         if (fileToLocate == null) {
             try {
                 LOGGER.debug("Beginning Transfer of AppCenter Build");
-                URL downloadLink = new URL(buildToDownload);
+                URL downloadLink = new URL(appInfo.getDirectLink());
                 int retryCount = 0;
                 boolean retry = true;
                 while (retry && retryCount <= 5) {
@@ -236,7 +235,7 @@ public class AppCenterManager implements IArtifactManager {
      * @return brings back a true/false on whether or not the build was successfully downloaded.
      * @throws IOException throws a non Interruption Exception up.
      */
-    private boolean downloadBuild(String fileName, URL downloadLink) throws IOException {
+    private static boolean downloadBuild(String fileName, URL downloadLink) throws IOException {
         try (ReadableByteChannel readableByteChannel = Channels.newChannel(downloadLink.openStream());
                 FileOutputStream fos = new FileOutputStream(fileName)) {
             if (Thread.currentThread().isInterrupted()) {
@@ -258,24 +257,24 @@ public class AppCenterManager implements IArtifactManager {
      * @param platformName takes in the platform we wish to download for.
      * @return Map&lt;String, String&gt;
      */
-    private Map<String, String> getAppId(String appName, String platformName) {
-        Map<String, String> appMap = new HashMap<>();
+    private static Map<String, ImmutablePair<String, String>> getAppId(String appName, String platformName) {
+        Map<String, ImmutablePair<String, String>> appMap = new HashMap<>();
 
         RequestEntity<String> retrieveApps = buildRequestEntity(
                 HOST_URL,
                 API_APPS,
                 HttpMethod.GET);
-        JsonNode appResults = restTemplate.exchange(retrieveApps, JsonNode.class).getBody();
+        JsonNode appResults = restTemplate.get().exchange(retrieveApps, JsonNode.class).getBody();
         LOGGER.info("AppCenter Searching For App: {}", appName);
         LOGGER.debug("AppCenter JSON Response: {}", appResults);
         Objects.requireNonNull(appResults);
 
         for (JsonNode node : appResults) {
             if (platformName.equalsIgnoreCase(node.get("os").asText()) && node.get("name").asText().toLowerCase().contains(appName.toLowerCase())) {
-                ownerName = node.get("owner").get("name").asText();
+                String ownerName = node.get("owner").get("name").asText();
                 String app = node.get("name").asText();
                 LOGGER.info("Found Owner: {} App: {}", ownerName, app);
-                appMap.put(app, getLatestBuildDate(app, node.get("updated_at").asText()));
+                appMap.put(app, getLatestBuildDate(app, node.get("updated_at").asText(), ownerName));
             }
         }
 
@@ -288,7 +287,7 @@ public class AppCenterManager implements IArtifactManager {
         }
 
         throw new NotFoundException(
-                String.format("Application Not Found in AppCenter for Organization (%s) Name (%s), Platform (%s)", ownerName, appName, platformName));
+                String.format("Application Not Found in AppCenter for Name (%s), Platform (%s)", appName, platformName));
     }
 
     /**
@@ -298,7 +297,7 @@ public class AppCenterManager implements IArtifactManager {
      *                  build.
      * @return String
      */
-    private String scanAppForBuild(Map<String, String> apps, String buildType, String version, AppInfo appInfo) {
+    private static String scanAppForBuild(Map<String, ImmutablePair<String, String>> apps, String buildType, String version, AppInfo appInfo) {
         for (String currentApp : apps.keySet()) {
             LOGGER.info("Scanning App {}", currentApp);
             MultiValueMap<String, String> queryParams = new LinkedMultiValueMap<>();
@@ -307,10 +306,10 @@ public class AppCenterManager implements IArtifactManager {
 
             RequestEntity<String> retrieveList = buildRequestEntity(
                     HOST_URL,
-                    String.format("%s/%s/%s/releases", API_APPS, ownerName, currentApp),
+                    String.format("%s/%s/%s/releases", API_APPS, apps.get(currentApp).getRight(), currentApp),
                     queryParams,
                     HttpMethod.GET);
-            JsonNode buildList = restTemplate.exchange(retrieveList, JsonNode.class).getBody();
+            JsonNode buildList = restTemplate.get().exchange(retrieveList, JsonNode.class).getBody();
             LOGGER.debug("Available Builds JSON: {}", buildList);
 
             Objects.requireNonNull(buildList);
@@ -325,14 +324,14 @@ public class AppCenterManager implements IArtifactManager {
                     }
 
                     String latestBuildNumber = build.get("id").asText();
-                    versionShort = build.get("short_version").asText();
-                    versionLong = build.get("version").asText();
+                    String versionShort = build.get("short_version").asText();
+                    String versionLong = build.get("version").asText();
 
                     RequestEntity<String> retrieveBuildUrl = buildRequestEntity(
                             HOST_URL,
-                            String.format("%s/%s/%s/releases/%s", API_APPS, ownerName, currentApp, latestBuildNumber),
+                            String.format("%s/%s/%s/releases/%s", API_APPS, apps.get(currentApp).getRight(), currentApp, latestBuildNumber),
                             HttpMethod.GET);
-                    JsonNode appBuild = restTemplate.exchange(retrieveBuildUrl, JsonNode.class).getBody();
+                    JsonNode appBuild = restTemplate.get().exchange(retrieveBuildUrl, JsonNode.class).getBody();
 
                     Objects.requireNonNull(appBuild);
 
@@ -361,7 +360,7 @@ public class AppCenterManager implements IArtifactManager {
      * @param appUpdatedAt passing in of a backup date value if the app we look at doesn't have a build associated to it.
      * @return the date value to be used in sorting.
      */
-    private String getLatestBuildDate(String app, String appUpdatedAt) {
+    private static ImmutablePair<String, String> getLatestBuildDate(String app, String appUpdatedAt, String ownerName) {
         MultiValueMap<String, String> queryParams = new LinkedMultiValueMap<>();
         queryParams.add("published_only", "true");
         queryParams.add("scope", "tester");
@@ -371,16 +370,16 @@ public class AppCenterManager implements IArtifactManager {
                 String.format("%s/%s/%s/releases", API_APPS, ownerName, app),
                 queryParams,
                 HttpMethod.GET);
-        JsonNode buildList = restTemplate.exchange(retrieveList, JsonNode.class).getBody();
+        JsonNode buildList = restTemplate.get().exchange(retrieveList, JsonNode.class).getBody();
         Objects.requireNonNull(buildList);
 
         if (buildList.size() > 0) {
-            return buildList.get(0).get("uploaded_at").asText();
+            return new ImmutablePair<>(buildList.get(0).get("uploaded_at").asText(), ownerName);
         }
-        return appUpdatedAt;
+        return new ImmutablePair<>(appUpdatedAt, ownerName);
     }
 
-    private boolean checkBuild(String version, JsonNode node) {
+    private static boolean checkBuild(String version, JsonNode node) {
 
         if ("latest".equalsIgnoreCase(version)) {
             return true;
@@ -392,7 +391,7 @@ public class AppCenterManager implements IArtifactManager {
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
-    private RequestEntity<String> buildRequestEntity(String hostUrl, String path, HttpMethod httpMethod) {
+    private static RequestEntity<String> buildRequestEntity(String hostUrl, String path, HttpMethod httpMethod) {
 
         UriComponents uriComponents = UriComponentsBuilder.newInstance()
                 .scheme("https")
@@ -404,7 +403,7 @@ public class AppCenterManager implements IArtifactManager {
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
-    private RequestEntity<String> buildRequestEntity(String hostUrl, String path,
+    private static RequestEntity<String> buildRequestEntity(String hostUrl, String path,
             MultiValueMap<String, String> listQueryParams, HttpMethod httpMethod) {
 
         UriComponents uriComponents = UriComponentsBuilder.newInstance()
@@ -417,7 +416,7 @@ public class AppCenterManager implements IArtifactManager {
         return new RequestEntity(setHeaders(), httpMethod, uriComponents.toUri());
     }
 
-    private HttpHeaders setHeaders() {
+    private static HttpHeaders setHeaders() {
 
         HttpHeaders httpHeader = new HttpHeaders();
         httpHeader.add("Content-Type", "application/json; charset=utf-8");
@@ -426,9 +425,9 @@ public class AppCenterManager implements IArtifactManager {
         return httpHeader;
     }
 
-    private String createFileName(String appName, String buildType, String platformName) {
+    private static String createFileName(String appName, String buildType, String platformName, AppInfo appInfo) {
 
-        String fileName = String.format("%s.%s.%s.%s", appName, buildType, versionShort, versionLong)
+        String fileName = String.format("%s.%s.%s.%s", appName, buildType, appInfo.getVersion(), appInfo.getBuild())
                 .replace(" ", "");
 
         if (platformName.toLowerCase().contains("ios")) {
@@ -437,16 +436,16 @@ public class AppCenterManager implements IArtifactManager {
         return fileName + ".apk";
     }
 
-    private boolean checkNotesForCorrectBuild(String pattern, JsonNode node) {
+    private static boolean checkNotesForCorrectBuild(String pattern, JsonNode node) {
 
         return checkForPattern("release_notes", pattern, node);
     }
 
-    private boolean checkTitleForCorrectPattern(String pattern, JsonNode node) {
+    private static boolean checkTitleForCorrectPattern(String pattern, JsonNode node) {
         return checkForPattern("app_name", pattern, node);
     }
 
-    private boolean checkForPattern(String nodeName, String pattern, JsonNode node) {
+    private static boolean checkForPattern(String nodeName, String pattern, JsonNode node) {
         LOGGER.debug("\nPattern to be checked: {}", pattern);
         if (node.findPath("release_notes").isMissingNode()) {
             return false;
@@ -467,14 +466,14 @@ public class AppCenterManager implements IArtifactManager {
         return !pattern.isEmpty() && scanningAllNotes(String.format(patternToReplace, pattern), nodeField);
     }
 
-    private boolean searchFieldsForString(String pattern, String stringToSearch) {
+    private static boolean searchFieldsForString(String pattern, String stringToSearch) {
         Pattern p = Pattern.compile(pattern);
         Matcher m = p.matcher(stringToSearch);
 
         return m.find();
     }
 
-    private boolean scanningAllNotes(String pattern, String noteField) {
+    private static boolean scanningAllNotes(String pattern, String noteField) {
         boolean foundMessages = false;
 
         foundMessages = searchFieldsForString(pattern, noteField);

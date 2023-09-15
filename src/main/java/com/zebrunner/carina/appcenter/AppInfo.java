@@ -1,5 +1,6 @@
 package com.zebrunner.carina.appcenter;
 
+//Beta
 public final class AppInfo {
 
     private String directLink;
