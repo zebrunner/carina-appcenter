@@ -62,9 +62,7 @@ import java.util.stream.Collectors;
 public class AppCenterManager implements IArtifactManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
     private static final Map<String, LazyInitializer<AppCenterApp>> APP_INFO_MAP = new ConcurrentHashMap<>();
-    private static final ThreadLocal<ApiClient> API_CLIENT = ThreadLocal.withInitial(() -> new ApiClient().addDefaultHeader("x-api-token",
-            Configuration.getRequired(AppCenterConfiguration.Parameter.APPCENTER_TOKEN,
-                    StandardConfigurationOption.DECRYPT)));
+    private final ApiClient apiClient;
     private static final String INVALID_LINK_MESSAGE = "AppCenter url is not correct: %s%n It should be like: %s.";
     private static final String VALID_LINK = "appcenter://appName/platformName/buildType/version";
 
@@ -72,10 +70,6 @@ public class AppCenterManager implements IArtifactManager {
     private static final String PLATFORM_NAME = "platformName";
     private static final String BUILD_TYPE = "buildType";
     private static final String APP_VERSION = "version";
-
-    private AppCenterManager() {
-        // hide
-    }
 
     /**
      * Pattern for link like {@code appcenter://appName/platformName/buildType/version}
@@ -85,6 +79,12 @@ public class AppCenterManager implements IArtifactManager {
                     + "(?<" + PLATFORM_NAME + ">[a-zA-Z-0-9][^\\/]*)\\/"
                     + "(?<" + BUILD_TYPE + ">[a-zA-Z-0-9][^\\/]*)\\/"
                     + "(?<" + APP_VERSION + ">[a-zA-Z-0-9][^\\/]*)");
+
+    private AppCenterManager() {
+        apiClient = new ApiClient().addDefaultHeader("x-api-token",
+                Configuration.getRequired(AppCenterConfiguration.Parameter.APPCENTER_TOKEN,
+                        StandardConfigurationOption.DECRYPT));
+    }
 
     /**
      * Get new instance of {@link AppCenterManager}
@@ -153,7 +153,7 @@ public class AppCenterManager implements IArtifactManager {
                                     String buildType = matcher.group(BUILD_TYPE);
                                     String version = matcher.group(APP_VERSION);
 
-                                    Map<String, App> appMap = new AccountApi(API_CLIENT.get())
+                                    Map<String, App> appMap = new AccountApi(apiClient)
                                             .appsList(null)
                                             .stream()
                                             .filter(a -> StringUtils.equalsIgnoreCase(platformName, a.getOs().toString()) &&
@@ -178,7 +178,7 @@ public class AppCenterManager implements IArtifactManager {
                                         String name = entry.getKey();
                                         App app = entry.getValue();
 
-                                        List<ReleasesAvailableToTester> retrieveList = new DistributeApi(API_CLIENT.get())
+                                        List<ReleasesAvailableToTester> retrieveList = new DistributeApi(apiClient)
                                                 .releasesList(app.getOwner().getName(), name, true,
                                                         "tester", null,
                                                         null);
@@ -197,7 +197,7 @@ public class AppCenterManager implements IArtifactManager {
                                                 appCenterApp.setVersion(build.getShortVersion());
                                                 appCenterApp.setBuild(build.getVersion());
 
-                                                ReleaseDetailsResponse appBuild = new DistributeApi(API_CLIENT.get()).releasesGetLatestByUser(
+                                                ReleaseDetailsResponse appBuild = new DistributeApi(apiClient).releasesGetLatestByUser(
                                                         String.valueOf(latestBuildNumber),
                                                         app.getOwner().getName(), name, null, null);
 
@@ -343,8 +343,8 @@ public class AppCenterManager implements IArtifactManager {
      * @param appUpdatedAt passing in of a backup date value if the app we look at doesn't have a build associated to it.
      * @return the date value to be used in sorting.
      */
-    private static String getLatestBuildDate(String app, String appUpdatedAt, String ownerName) {
-        List<ReleasesAvailableToTester> retrieveList = new DistributeApi(API_CLIENT.get()).releasesList(ownerName, app,
+    private String getLatestBuildDate(String app, String appUpdatedAt, String ownerName) {
+        List<ReleasesAvailableToTester> retrieveList = new DistributeApi(apiClient).releasesList(ownerName, app,
                 true, "tester", null, null);
         if (!retrieveList.isEmpty()) {
             return retrieveList.get(0).getUploadedAt();
