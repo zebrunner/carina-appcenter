@@ -22,7 +22,6 @@ import com.zebrunner.carina.appcenter.client.model.App;
 import com.zebrunner.carina.appcenter.client.model.ReleaseDetailsResponse;
 import com.zebrunner.carina.appcenter.client.model.ReleasesAvailableToTester;
 import com.zebrunner.carina.appcenter.config.AppCenterConfiguration;
-import com.zebrunner.carina.commons.artifact.IAppInfo;
 import com.zebrunner.carina.commons.artifact.IArtifactManager;
 import com.zebrunner.carina.utils.config.Configuration;
 import com.zebrunner.carina.utils.config.StandardConfigurationOption;
