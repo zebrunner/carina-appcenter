@@ -109,7 +109,6 @@ public class ReleaseDetailsResponse {
         OPENAPI_REQUIRED_FIELDS.add(SERIALIZED_NAME_VERSION);
         OPENAPI_REQUIRED_FIELDS.add(SERIALIZED_NAME_SHORT_VERSION);
         OPENAPI_REQUIRED_FIELDS.add(SERIALIZED_NAME_UPLOADED_AT);
-        OPENAPI_REQUIRED_FIELDS.add(SERIALIZED_NAME_APP_ICON_URL);
         OPENAPI_REQUIRED_FIELDS.add(SERIALIZED_NAME_ENABLED);
     }
 
@@ -325,11 +324,6 @@ public class ReleaseDetailsResponse {
             throw new IllegalArgumentException(
                     String.format("Expected the field `secondary_download_url` to be a primitive type in the JSON string but got `%s`",
                             jsonObj.get(SERIALIZED_NAME_SECONDARY_DOWNLOAD_URL).toString()));
-        }
-        if (!jsonObj.get(SERIALIZED_NAME_APP_ICON_URL).isJsonPrimitive()) {
-            throw new IllegalArgumentException(
-                    String.format("Expected the field `app_icon_url` to be a primitive type in the JSON string but got `%s`",
-                            jsonObj.get(SERIALIZED_NAME_APP_ICON_URL).toString()));
         }
         if ((jsonObj.get(SERIALIZED_NAME_INSTALL_URL) != null && !jsonObj.get(SERIALIZED_NAME_INSTALL_URL).isJsonNull()) && !jsonObj.get(
                 SERIALIZED_NAME_INSTALL_URL).isJsonPrimitive()) {
